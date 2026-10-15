@@ -4,8 +4,13 @@
 package view
 
 import (
+	"context"
+	"strconv"
+
+	"github.com/derailed/k9s/internal"
 	"github.com/derailed/k9s/internal/client"
 	"github.com/derailed/k9s/internal/model1"
+	"github.com/derailed/k9s/internal/render"
 	"github.com/derailed/k9s/internal/ui"
 	"github.com/derailed/tcell/v2"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -29,8 +34,13 @@ func NewNamespace(gvr *client.GVR) ResourceViewer {
 	n.GetTable().SetDecorateFn(n.decorate)
 	n.GetTable().SetEnterFn(n.switchNs)
 	n.AddBindKeysFn(n.bindKeys)
+	n.SetContextFn(n.nsContext)
 
 	return &n
+}
+
+func (n *Namespace) nsContext(ctx context.Context) context.Context {
+	return context.WithValue(ctx, internal.KeyPodCounting, !n.App().Config.K9s.DisablePodCounting)
 }
 
 func (n *Namespace) bindKeys(aa *ui.KeyActions) {
@@ -80,7 +90,7 @@ func (n *Namespace) decorate(td *model1.TableData) {
 			Kind: model1.EventUnchanged,
 			Row: model1.Row{
 				ID:     client.NamespaceAll,
-				Fields: model1.Fields{client.NamespaceAll, "Active", "", "", ""},
+				Fields: allNSFields(td),
 			},
 		},
 		)
@@ -102,4 +112,44 @@ func (n *Namespace) decorate(td *model1.TableData) {
 		td.SetRow(i, re)
 		return true
 	})
+}
+
+// allNSFields builds the all namespaces row, totaling pods stats across namespaces.
+func allNSFields(td *model1.TableData) model1.Fields {
+	h := td.Header()
+	ff := make(model1.Fields, len(h))
+	for i, c := range h {
+		switch c.Name {
+		case "NAME":
+			ff[i] = client.NamespaceAll
+		case "STATUS":
+			ff[i] = "Active"
+		case "PODS", "PENDING", "FAULTS":
+			ff[i] = sumColumn(td, i)
+		}
+	}
+
+	return ff
+}
+
+func sumColumn(td *model1.TableData, col int) string {
+	var total int
+	ok := true
+	td.RowsRange(func(_ int, re model1.RowEvent) bool {
+		if col >= len(re.Row.Fields) {
+			return true
+		}
+		v, err := strconv.Atoi(re.Row.Fields[col])
+		if err != nil {
+			ok = false
+			return false
+		}
+		total += v
+		return true
+	})
+	if !ok {
+		return render.NAValue
+	}
+
+	return strconv.Itoa(total)
 }
