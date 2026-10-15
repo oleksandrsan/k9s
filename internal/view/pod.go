@@ -68,8 +68,6 @@ func NewPod(gvr *client.GVR) ResourceViewer {
 
 func (p *Pod) portForwardIndicator(data *model1.TableData) {
 	ff := p.App().factory.Forwarders()
-
-	defer decorateCpuMemHeaderRows(p.App(), data)
 	idx, ok := data.IndexOfHeader("PF")
 	if !ok {
 		return

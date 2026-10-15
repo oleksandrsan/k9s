@@ -49,14 +49,17 @@ func SetBarStyle(s BarStyle) {
 	barStyle.Store(&s)
 }
 
+// PercBarDecorator renders a percentage column as a gauge using the row color.
+var PercBarDecorator = percBarDecorator("")
+
 // CPUBarDecorator renders a cpu percentage column as a gauge.
 var CPUBarDecorator = percBarDecorator(config.CPU)
 
 // MEMBarDecorator renders a memory percentage column as a gauge.
 var MEMBarDecorator = percBarDecorator(config.MEM)
 
-// percBarDecorator renders a percentage column as a gauge followed by its value,
-// colored per the given resource thresholds.
+// percBarDecorator renders a percentage column as a gauge followed by its value.
+// When a resource is given, the cell is colored per the resource thresholds.
 // Values above 100 (ie overcommitted limits) render a full gauge.
 func percBarDecorator(res string) model1.DecoratorFunc {
 	return func(field string) string {
@@ -69,11 +72,14 @@ func percBarDecorator(res string) model1.DecoratorFunc {
 			return field
 		}
 
-		return fmt.Sprintf("[%s::]%s[-::] %3d%%%s", barStyle.Load().color(res, p), percBar(p, barWidth), p, mm[2])
+		return fmt.Sprintf("[%s::]%s %3d%%[-::]%s", barStyle.Load().color(res, p), percBar(p, barWidth), p, mm[2])
 	}
 }
 
 func (s *BarStyle) color(res string, p int) string {
+	if res == "" {
+		return barStdColor
+	}
 	//nolint:exhaustive
 	switch s.Thresholds.LevelFor(res, min(p, 100)) {
 	case config.SeverityHigh:

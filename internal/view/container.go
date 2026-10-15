@@ -32,7 +32,6 @@ func NewContainer(gvr *client.GVR) ResourceViewer {
 	c.ResourceViewer = NewLogsExtender(NewBrowser(gvr), c.logOptions)
 	c.SetEnvFn(c.k9sEnv)
 	c.GetTable().SetEnterFn(c.viewLogs)
-	c.GetTable().SetDecorateFn(c.decorateRows)
 	c.GetTable().SetSortCol("IDX", true)
 	c.AddBindKeysFn(c.bindKeys)
 	c.GetTable().SetDecorateFn(c.portForwardIndicator)
@@ -52,10 +51,6 @@ func (c *Container) portForwardIndicator(data *model1.TableData) {
 		}
 		return true
 	})
-}
-
-func (c *Container) decorateRows(data *model1.TableData) {
-	decorateCpuMemHeaderRows(c.App(), data)
 }
 
 // Name returns the component name.

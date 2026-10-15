@@ -227,43 +227,6 @@ func fqn(ns, n string) string {
 	return ns + "/" + n
 }
 
-func decorateCpuMemHeaderRows(app *App, data *model1.TableData) {
-	for colIndex, header := range data.Header() {
-		var check string
-		if header.Name == "%CPU/L" {
-			check = config.CPU
-		}
-		if header.Name == "%MEM/L" {
-			check = config.MEM
-		}
-		if check == "" {
-			continue
-		}
-		data.RowsRange(func(_ int, re model1.RowEvent) bool {
-			if re.Row.Fields[colIndex] == render.NAValue {
-				return true
-			}
-			n, err := strconv.Atoi(re.Row.Fields[colIndex])
-			if err != nil {
-				return true
-			}
-			if n > 100 {
-				n = 100
-			}
-			severity := app.Config.K9s.Thresholds.LevelFor(check, n)
-			if severity == config.SeverityLow {
-				return true
-			}
-			color := app.Config.K9s.Thresholds.SeverityColor(check, n)
-			if color != "" {
-				re.Row.Fields[colIndex] = "[" + color + "::b]" + re.Row.Fields[colIndex]
-			}
-
-			return true
-		})
-	}
-}
-
 func matchTag(i int, s string) string {
 	return `<<<"search_` + strconv.Itoa(i) + `">>>` + s + `<<<"">>>`
 }
