@@ -19,6 +19,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
+	resourcehelper "k8s.io/component-helpers/resource"
 	"k8s.io/kubectl/pkg/drain"
 	"k8s.io/kubectl/pkg/scheme"
 	mv1beta1 "k8s.io/metrics/pkg/apis/metrics/v1beta1"
@@ -152,14 +153,15 @@ func (n *Node) Get(ctx context.Context, path string) (runtime.Object, error) {
 		nmx, _ = client.DialMetrics(n.Client()).FetchNodeMetrics(ctx, path)
 	}
 
-	podCount := -1
+	nwm := render.NodeWithMetrics{Raw: raw, MX: nmx, PodCount: -1}
 	if shouldCountPods, _ := ctx.Value(internal.KeyPodCounting).(bool); shouldCountPods {
 		if pp, err := n.GetPods(path); err == nil {
-			podCount = len(pp)
+			nwm.PodCount = len(pp)
+			nwm.Requests, nwm.Limits = AllocatedResources(pp)
 		}
 	}
 
-	return &render.NodeWithMetrics{Raw: raw, MX: nmx, PodCount: podCount}, nil
+	return &nwm, nil
 }
 
 // List returns a collection of node resources.
@@ -175,12 +177,16 @@ func (n *Node) List(ctx context.Context, ns string) ([]runtime.Object, error) {
 	}
 
 	shouldCountPods, _ := ctx.Value(internal.KeyPodCounting).(bool)
-	var pods []runtime.Object
+	var (
+		pods   []runtime.Object
+		podsOn map[string][]*v1.Pod
+	)
 	if shouldCountPods {
 		pods, err = n.getFactory().List(client.PodGVR, client.BlankNamespace, false, labels.Everything())
 		if err != nil {
 			slog.Error("Unable to list pods", slogs.Error, err)
 		}
+		podsOn = podsByNode(pods)
 	}
 	res := make([]runtime.Object, 0, len(oo))
 	for _, o := range oo {
@@ -201,11 +207,15 @@ func (n *Node) List(ctx context.Context, ns string) ([]runtime.Object, error) {
 				)
 			}
 		}
-		res = append(res, &render.NodeWithMetrics{
+		nwm := render.NodeWithMetrics{
 			Raw:      u,
 			MX:       nmx[name],
 			PodCount: podCount,
-		})
+		}
+		if shouldCountPods {
+			nwm.Requests, nwm.Limits = AllocatedResources(podsOn[name])
+		}
+		res = append(res, &nwm)
 	}
 
 	return res, nil
@@ -250,6 +260,54 @@ func (n *Node) GetPods(nodeName string) ([]*v1.Pod, error) {
 	}
 
 	return pp, nil
+}
+
+// AllocatedResources sums up the resources requested and limited by the given pods.
+// Like kubectl describe node, terminated pods are not accounted for.
+func AllocatedResources(pp []*v1.Pod) (reqs, limits v1.ResourceList) {
+	reqs, limits = v1.ResourceList{}, v1.ResourceList{}
+	for _, po := range pp {
+		if po.Status.Phase == v1.PodSucceeded || po.Status.Phase == v1.PodFailed {
+			continue
+		}
+		addResources(reqs, resourcehelper.PodRequests(po, resourcehelper.PodResourcesOptions{}))
+		addResources(limits, resourcehelper.PodLimits(po, resourcehelper.PodResourcesOptions{}))
+	}
+
+	return
+}
+
+func addResources(total, rl v1.ResourceList) {
+	for k, q := range rl {
+		if v, ok := total[k]; ok {
+			v.Add(q)
+			total[k] = v
+			continue
+		}
+		total[k] = q.DeepCopy()
+	}
+}
+
+// podsByNode groups pods by the node they are scheduled on.
+func podsByNode(oo []runtime.Object) map[string][]*v1.Pod {
+	pp := make(map[string][]*v1.Pod)
+	for _, o := range oo {
+		u, ok := o.(*unstructured.Unstructured)
+		if !ok {
+			continue
+		}
+		var po v1.Pod
+		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(u.Object, &po); err != nil {
+			slog.Error("Unable to convert pod", slogs.Error, err)
+			continue
+		}
+		if po.Spec.NodeName == "" {
+			continue
+		}
+		pp[po.Spec.NodeName] = append(pp[po.Spec.NodeName], &po)
+	}
+
+	return pp
 }
 
 // ensureCordoned returns whether the given node has been cordoned

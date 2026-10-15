@@ -50,10 +50,18 @@ var defaultNOHeader = model1.Header{
 	model1.HeaderColumn{Name: "PODS", Attrs: model1.Attrs{Align: tview.AlignRight}},
 	model1.HeaderColumn{Name: colCPU, Attrs: model1.Attrs{Align: tview.AlignRight, MX: true}},
 	model1.HeaderColumn{Name: "CPU/A", Attrs: model1.Attrs{Align: tview.AlignRight, MX: true}},
-	model1.HeaderColumn{Name: "%CPU", Attrs: model1.Attrs{Align: tview.AlignRight, MX: true}},
+	model1.HeaderColumn{Name: "%CPU", Attrs: model1.Attrs{Align: tview.AlignRight, MX: true, Decorator: CPUBarDecorator}},
+	model1.HeaderColumn{Name: "CPU/R", Attrs: model1.Attrs{Align: tview.AlignRight, Wide: true}},
+	model1.HeaderColumn{Name: "%CPU/R", Attrs: model1.Attrs{Align: tview.AlignRight, Decorator: CPUBarDecorator}},
+	model1.HeaderColumn{Name: "CPU/L", Attrs: model1.Attrs{Align: tview.AlignRight, Wide: true}},
+	model1.HeaderColumn{Name: "%CPU/L", Attrs: model1.Attrs{Align: tview.AlignRight, Decorator: CPUBarDecorator}},
 	model1.HeaderColumn{Name: colMEM, Attrs: model1.Attrs{Align: tview.AlignRight, MX: true}},
 	model1.HeaderColumn{Name: "MEM/A", Attrs: model1.Attrs{Align: tview.AlignRight, MX: true}},
-	model1.HeaderColumn{Name: "%MEM", Attrs: model1.Attrs{Align: tview.AlignRight, MX: true}},
+	model1.HeaderColumn{Name: "%MEM", Attrs: model1.Attrs{Align: tview.AlignRight, MX: true, Decorator: MEMBarDecorator}},
+	model1.HeaderColumn{Name: "MEM/R", Attrs: model1.Attrs{Align: tview.AlignRight, Wide: true}},
+	model1.HeaderColumn{Name: "%MEM/R", Attrs: model1.Attrs{Align: tview.AlignRight, Decorator: MEMBarDecorator}},
+	model1.HeaderColumn{Name: "MEM/L", Attrs: model1.Attrs{Align: tview.AlignRight, Wide: true}},
+	model1.HeaderColumn{Name: "%MEM/L", Attrs: model1.Attrs{Align: tview.AlignRight, Decorator: MEMBarDecorator}},
 	model1.HeaderColumn{Name: "GPU/A", Attrs: model1.Attrs{Align: tview.AlignRight, MX: true}},
 	model1.HeaderColumn{Name: "GPU/C", Attrs: model1.Attrs{Align: tview.AlignRight, MX: true}},
 	model1.HeaderColumn{Name: "SH-GPU/A", Attrs: model1.Attrs{Align: tview.AlignRight, MX: true}},
@@ -121,6 +129,8 @@ func (n Node) defaultRow(nwm *NodeWithMetrics, r *model1.Row) error {
 	iIP, eIP = missing(iIP), missing(eIP)
 
 	c, a := gatherNodeMX(&no, nwm.MX)
+	req := allocatedCols(nwm.Requests, a)
+	lim := allocatedCols(nwm.Limits, a)
 
 	statuses := make(sort.StringSlice, 10)
 	status(no.Status.Conditions, no.Spec.Unschedulable, statuses)
@@ -149,9 +159,17 @@ func (n Node) defaultRow(nwm *NodeWithMetrics, r *model1.Row) error {
 		toMc(c.cpu),
 		toMc(a.cpu),
 		client.ToPercentageStr(c.cpu, a.cpu),
+		req.cpu,
+		req.pcpu,
+		lim.cpu,
+		lim.pcpu,
 		toMi(c.mem),
 		toMi(a.mem),
 		client.ToPercentageStr(c.mem, a.mem),
+		req.mem,
+		req.pmem,
+		lim.mem,
+		lim.pmem,
 		toMu(a.gpu),
 		toMu(c.gpu),
 		toMu(a.gpuShared),
@@ -222,6 +240,8 @@ type NodeWithMetrics struct {
 	Raw      *unstructured.Unstructured
 	MX       *mv1beta1.NodeMetrics
 	PodCount int
+	// Requests and Limits track resources allocated by the node's pods. Nil when unknown.
+	Requests, Limits v1.ResourceList
 }
 
 // GetObjectKind returns a schema object.
@@ -239,6 +259,25 @@ type metric struct {
 	lcpu, lmem     int64
 	gpu, gpuShared int64
 	lgpu           int64
+}
+
+type allocated struct {
+	cpu, pcpu, mem, pmem string
+}
+
+// allocatedCols renders pods allocated resources against the node allocatable ones.
+func allocatedCols(rl v1.ResourceList, a metric) allocated {
+	if rl == nil {
+		return allocated{cpu: NAValue, pcpu: NAValue, mem: NAValue, pmem: NAValue}
+	}
+	cpu, mem := rl.Cpu().MilliValue(), rl.Memory().Value()
+
+	return allocated{
+		cpu:  toMc(cpu),
+		pcpu: client.ToPercentageStr(cpu, a.cpu),
+		mem:  toMi(mem),
+		pmem: client.ToPercentageStr(mem, a.mem),
+	}
 }
 
 func gatherNodeMX(no *v1.Node, mx *mv1beta1.NodeMetrics) (c, a metric) {

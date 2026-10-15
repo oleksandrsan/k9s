@@ -14,6 +14,7 @@ import (
 	"github.com/derailed/k9s/internal/config"
 	"github.com/derailed/k9s/internal/model"
 	"github.com/derailed/k9s/internal/model1"
+	"github.com/derailed/k9s/internal/render"
 	"github.com/derailed/k9s/internal/slogs"
 	"github.com/fsnotify/fsnotify"
 )
@@ -373,4 +374,14 @@ func (c *Configurator) updateStyles(f string, invert bool) {
 	model1.HighlightColor = c.Styles.Frame().Status.HighlightColor.Color()
 	model1.KillColor = c.Styles.Frame().Status.KillColor.Color()
 	model1.CompletedColor = c.Styles.Frame().Status.CompletedColor.Color()
+
+	bs := render.BarStyle{
+		Thresholds: config.NewThreshold(),
+		WarnColor:  c.Styles.Frame().Status.PendingColor.Color(),
+		CritColor:  c.Styles.Frame().Status.ErrorColor.Color(),
+	}
+	if c.Config != nil && c.Config.K9s != nil && c.Config.K9s.Thresholds != nil {
+		bs.Thresholds = c.Config.K9s.Thresholds
+	}
+	render.SetBarStyle(bs)
 }
