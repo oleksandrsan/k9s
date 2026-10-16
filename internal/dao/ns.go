@@ -16,6 +16,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
+	mv1beta1 "k8s.io/metrics/pkg/apis/metrics/v1beta1"
 )
 
 var _ Accessor = (*Namespace)(nil)
@@ -32,13 +33,25 @@ func (n *Namespace) List(ctx context.Context, ns string) ([]runtime.Object, erro
 		return oo, err
 	}
 
-	var stats map[string]*render.PodStats
+	var (
+		podsIn map[string][]*v1.Pod
+		alloc  v1.ResourceList
+		usage  map[string]v1.ResourceList
+	)
 	if shouldCountPods, _ := ctx.Value(internal.KeyPodCounting).(bool); shouldCountPods {
 		pods, err := n.getFactory().List(client.PodGVR, client.BlankNamespace, false, labels.Everything())
 		if err != nil {
 			slog.Error("Unable to list pods", slogs.Error, err)
 		} else {
-			stats = podStatsByNamespace(pods)
+			podsIn = podsByNamespace(pods)
+		}
+		if nn, err := n.getFactory().List(client.NodeGVR, client.BlankNamespace, false, labels.Everything()); err == nil {
+			alloc = clusterAllocatable(nn)
+		}
+	}
+	if withMx, ok := ctx.Value(internal.KeyWithMetrics).(bool); ok && withMx {
+		if mx, err := client.DialMetrics(n.Client()).FetchPodsMetrics(ctx, client.BlankNamespace); err == nil {
+			usage = usageByNamespace(mx)
 		}
 	}
 
@@ -48,11 +61,16 @@ func (n *Namespace) List(ctx context.Context, ns string) ([]runtime.Object, erro
 		if !ok {
 			return res, fmt.Errorf("expecting *unstructured.Unstructured but got `%T", o)
 		}
-		nws := render.NamespaceWithStats{Raw: u}
-		if stats != nil {
-			nws.Pods = stats[u.GetName()]
-			if nws.Pods == nil {
-				nws.Pods = new(render.PodStats)
+		nws := render.NamespaceWithStats{Raw: u, Allocatable: alloc}
+		if podsIn != nil {
+			pp := podsIn[u.GetName()]
+			nws.Pods = podStats(pp)
+			nws.Requests, nws.Limits = AllocatedResources(pp)
+		}
+		if usage != nil {
+			nws.MX = usage[u.GetName()]
+			if nws.MX == nil {
+				nws.MX = v1.ResourceList{}
 			}
 		}
 		res = append(res, &nws)
@@ -61,12 +79,9 @@ func (n *Namespace) List(ctx context.Context, ns string) ([]runtime.Object, erro
 	return res, nil
 }
 
-// podStatsByNamespace computes pods health breakdown per namespace.
-func podStatsByNamespace(oo []runtime.Object) map[string]*render.PodStats {
-	var (
-		p     render.Pod
-		stats = make(map[string]*render.PodStats)
-	)
+// podsByNamespace groups pods by namespace.
+func podsByNamespace(oo []runtime.Object) map[string][]*v1.Pod {
+	pp := make(map[string][]*v1.Pod)
 	for _, o := range oo {
 		u, ok := o.(*unstructured.Unstructured)
 		if !ok {
@@ -77,13 +92,58 @@ func podStatsByNamespace(oo []runtime.Object) map[string]*render.PodStats {
 			slog.Error("Unable to convert pod", slogs.Error, err)
 			continue
 		}
-		s, ok := stats[po.Namespace]
-		if !ok {
-			s = new(render.PodStats)
-			stats[po.Namespace] = s
-		}
-		s.Add(p.Health(&po))
+		pp[po.Namespace] = append(pp[po.Namespace], &po)
 	}
 
-	return stats
+	return pp
+}
+
+// podStats computes the given pods health breakdown.
+func podStats(pp []*v1.Pod) *render.PodStats {
+	var (
+		p render.Pod
+		s render.PodStats
+	)
+	for _, po := range pp {
+		s.Add(p.Health(po))
+	}
+
+	return &s
+}
+
+// usageByNamespace sums up pods resources usage per namespace.
+func usageByNamespace(mx *mv1beta1.PodMetricsList) map[string]v1.ResourceList {
+	uu := make(map[string]v1.ResourceList)
+	for i := range mx.Items {
+		pmx := &mx.Items[i]
+		total, ok := uu[pmx.Namespace]
+		if !ok {
+			total = v1.ResourceList{}
+			uu[pmx.Namespace] = total
+		}
+		for j := range pmx.Containers {
+			addResources(total, pmx.Containers[j].Usage)
+		}
+	}
+
+	return uu
+}
+
+// clusterAllocatable sums up all nodes allocatable resources.
+func clusterAllocatable(oo []runtime.Object) v1.ResourceList {
+	total := v1.ResourceList{}
+	for _, o := range oo {
+		u, ok := o.(*unstructured.Unstructured)
+		if !ok {
+			continue
+		}
+		var no v1.Node
+		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(u.Object, &no); err != nil {
+			slog.Error("Unable to convert node", slogs.Error, err)
+			continue
+		}
+		addResources(total, no.Status.Allocatable)
+	}
+
+	return total
 }

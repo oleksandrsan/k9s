@@ -114,7 +114,7 @@ func (n *Namespace) decorate(td *model1.TableData) {
 	})
 }
 
-// allNSFields builds the all namespaces row, totaling pods stats across namespaces.
+// allNSFields builds the all namespaces row, totaling pods stats and utilization across namespaces.
 func allNSFields(td *model1.TableData) model1.Fields {
 	h := td.Header()
 	ff := make(model1.Fields, len(h))
@@ -124,12 +124,31 @@ func allNSFields(td *model1.TableData) model1.Fields {
 			ff[i] = client.NamespaceAll
 		case "STATUS":
 			ff[i] = "Active"
-		case "PODS", "PENDING", "FAULTS":
+		case "PODS", "PENDING", "FAULTS", "CPU", "CPU/R", "CPU/L", "MEM", "MEM/R", "MEM/L":
 			ff[i] = sumColumn(td, i)
 		}
 	}
+	for pct, cols := range map[string][2]string{"%CPU/R": {"CPU", "CPU/R"}, "%MEM/R": {"MEM", "MEM/R"}} {
+		i, ok1 := h.IndexOf(pct, true)
+		v, ok2 := h.IndexOf(cols[0], true)
+		dv, ok3 := h.IndexOf(cols[1], true)
+		if !ok1 || !ok2 || !ok3 {
+			continue
+		}
+		ff[i] = percentOf(ff[v], ff[dv])
+	}
 
 	return ff
+}
+
+func percentOf(v, dv string) string {
+	n, err1 := strconv.Atoi(v)
+	d, err2 := strconv.Atoi(dv)
+	if err1 != nil || err2 != nil {
+		return render.NAValue
+	}
+
+	return client.ToPercentageStr(int64(n), int64(d))
 }
 
 func sumColumn(td *model1.TableData, col int) string {

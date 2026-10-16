@@ -21,16 +21,16 @@ func TestAllNSFields(t *testing.T) {
 	}{
 		"totals": {
 			rows: []model1.Fields{
-				{"ns1", "Active", "5", "1", "2", "", "2 faulty pod(s)", "1d"},
-				{"ns2", "Active", "3", "0", "1", "", "1 faulty pod(s)", "2d"},
+				{"ns1", "Active", "5", "1", "2", "100", "400", "800", "25", "10", "256", "512", "1024", "50", "5", "", "2 faulty pod(s)", "1d"},
+				{"ns2", "Active", "3", "0", "1", "300", "400", "0", "75", "10", "0", "512", "512", "0", "5", "", "1 faulty pod(s)", "2d"},
 			},
-			e: model1.Fields{client.NamespaceAll, "Active", "8", "1", "3", "", "", ""},
+			e: model1.Fields{client.NamespaceAll, "Active", "8", "1", "3", "400", "800", "800", "50", "", "256", "1024", "1536", "25", "", "", "", ""},
 		},
 		"unknown": {
 			rows: []model1.Fields{
-				{"ns1", "Active", "n/a", "n/a", "n/a", "", "", "1d"},
+				{"ns1", "Active", "n/a", "n/a", "n/a", "n/a", "n/a", "n/a", "n/a", "n/a", "n/a", "n/a", "n/a", "n/a", "n/a", "", "", "1d"},
 			},
-			e: model1.Fields{client.NamespaceAll, "Active", "n/a", "n/a", "n/a", "", "", ""},
+			e: model1.Fields{client.NamespaceAll, "Active", "n/a", "n/a", "n/a", "n/a", "n/a", "n/a", "n/a", "", "n/a", "n/a", "n/a", "n/a", "", "", "", ""},
 		},
 	}
 

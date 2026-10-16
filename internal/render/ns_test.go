@@ -11,6 +11,8 @@ import (
 	"github.com/derailed/tcell/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	v1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 )
 
 func TestNSColorer(t *testing.T) {
@@ -114,6 +116,69 @@ func TestNamespaceRenderStats(t *testing.T) {
 			require.NoError(t, n.Render(&render.NamespaceWithStats{Raw: load(t, "ns"), Pods: u.ps}, "-", &r))
 			assert.Equal(t, u.e, r.Fields[:5])
 			assert.Equal(t, u.valid, r.Fields[idx])
+		})
+	}
+}
+
+func TestNamespaceRenderUtilization(t *testing.T) {
+	var (
+		usage = v1.ResourceList{v1.ResourceCPU: resource.MustParse("250m"), v1.ResourceMemory: resource.MustParse("512Mi")}
+		reqs  = v1.ResourceList{v1.ResourceCPU: resource.MustParse("1"), v1.ResourceMemory: resource.MustParse("1Gi")}
+		lims  = v1.ResourceList{v1.ResourceCPU: resource.MustParse("2"), v1.ResourceMemory: resource.MustParse("2Gi")}
+		alloc = v1.ResourceList{v1.ResourceCPU: resource.MustParse("8"), v1.ResourceMemory: resource.MustParse("16Gi")}
+	)
+
+	uu := map[string]struct {
+		nws render.NamespaceWithStats
+		e   map[string]string
+	}{
+		"full": {
+			nws: render.NamespaceWithStats{MX: usage, Requests: reqs, Limits: lims, Allocatable: alloc},
+			e: map[string]string{
+				"CPU": "250", "CPU/R": "1000", "CPU/L": "2000", "%CPU/R": "25", "%CPU/C": "12",
+				"MEM": "512", "MEM/R": "1024", "MEM/L": "2048", "%MEM/R": "50", "%MEM/C": "6",
+			},
+		},
+		"no-metrics": {
+			nws: render.NamespaceWithStats{Requests: reqs, Limits: lims, Allocatable: alloc},
+			e: map[string]string{
+				"CPU": "n/a", "CPU/R": "1000", "%CPU/R": "n/a", "%CPU/C": "12",
+				"MEM": "n/a", "MEM/R": "1024", "%MEM/R": "n/a", "%MEM/C": "6",
+			},
+		},
+		"no-requests": {
+			nws: render.NamespaceWithStats{MX: usage, Requests: v1.ResourceList{}, Limits: v1.ResourceList{}, Allocatable: alloc},
+			e: map[string]string{
+				"CPU": "250", "CPU/R": "0", "%CPU/R": "n/a", "%CPU/C": "0",
+			},
+		},
+		"no-pods": {
+			nws: render.NamespaceWithStats{MX: usage},
+			e: map[string]string{
+				"CPU": "250", "CPU/R": "n/a", "CPU/L": "n/a", "%CPU/R": "n/a", "%CPU/C": "n/a",
+			},
+		},
+		"no-nodes": {
+			nws: render.NamespaceWithStats{MX: usage, Requests: reqs, Limits: lims},
+			e: map[string]string{
+				"%CPU/R": "25", "%CPU/C": "n/a", "%MEM/C": "n/a",
+			},
+		},
+	}
+
+	var n render.Namespace
+	h := n.Header("")
+	for k := range uu {
+		u := uu[k]
+		t.Run(k, func(t *testing.T) {
+			u.nws.Raw = load(t, "ns")
+			r := model1.NewRow(18)
+			require.NoError(t, n.Render(&u.nws, "-", &r))
+			for col, e := range u.e {
+				idx, ok := h.IndexOf(col, true)
+				require.True(t, ok, col)
+				assert.Equal(t, e, r.Fields[idx], col)
+			}
 		})
 	}
 }

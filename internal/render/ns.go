@@ -28,6 +28,16 @@ var defaultNSHeader = model1.Header{
 	model1.HeaderColumn{Name: "PODS", Attrs: model1.Attrs{Align: tview.AlignRight}},
 	model1.HeaderColumn{Name: "PENDING", Attrs: model1.Attrs{Align: tview.AlignRight}},
 	model1.HeaderColumn{Name: "FAULTS", Attrs: model1.Attrs{Align: tview.AlignRight}},
+	model1.HeaderColumn{Name: colCPU, Attrs: model1.Attrs{Align: tview.AlignRight, MX: true}},
+	model1.HeaderColumn{Name: "CPU/R", Attrs: model1.Attrs{Align: tview.AlignRight, Wide: true}},
+	model1.HeaderColumn{Name: "CPU/L", Attrs: model1.Attrs{Align: tview.AlignRight, Wide: true}},
+	model1.HeaderColumn{Name: "%CPU/R", Attrs: model1.Attrs{Align: tview.AlignRight, MX: true, Decorator: PercBarDecorator}},
+	model1.HeaderColumn{Name: "%CPU/C", Attrs: model1.Attrs{Align: tview.AlignRight, Decorator: PercBarDecorator}},
+	model1.HeaderColumn{Name: colMEM, Attrs: model1.Attrs{Align: tview.AlignRight, MX: true}},
+	model1.HeaderColumn{Name: "MEM/R", Attrs: model1.Attrs{Align: tview.AlignRight, Wide: true}},
+	model1.HeaderColumn{Name: "MEM/L", Attrs: model1.Attrs{Align: tview.AlignRight, Wide: true}},
+	model1.HeaderColumn{Name: "%MEM/R", Attrs: model1.Attrs{Align: tview.AlignRight, MX: true, Decorator: PercBarDecorator}},
+	model1.HeaderColumn{Name: "%MEM/C", Attrs: model1.Attrs{Align: tview.AlignRight, Decorator: PercBarDecorator}},
 	model1.HeaderColumn{Name: colLabels, Attrs: model1.Attrs{Wide: true}},
 	model1.HeaderColumn{Name: colValid, Attrs: model1.Attrs{Wide: true}},
 	model1.HeaderColumn{Name: colAge, Attrs: model1.Attrs{Time: true}},
@@ -92,6 +102,8 @@ func (n Namespace) defaultRow(nws *NamespaceWithStats, r *model1.Row) error {
 		pods, pending, faults = strconv.Itoa(ps.Total), strconv.Itoa(ps.Pending), strconv.Itoa(ps.Faults)
 	}
 
+	cpu, mem := nws.utilization()
+
 	r.ID = client.MetaFQN(&ns.ObjectMeta)
 	r.Fields = model1.Fields{
 		ns.Name,
@@ -99,6 +111,16 @@ func (n Namespace) defaultRow(nws *NamespaceWithStats, r *model1.Row) error {
 		pods,
 		pending,
 		faults,
+		cpu.usage,
+		cpu.req,
+		cpu.lim,
+		cpu.pReq,
+		cpu.pCluster,
+		mem.usage,
+		mem.req,
+		mem.lim,
+		mem.pReq,
+		mem.pCluster,
 		mapToStr(ns.Labels),
 		AsStatus(n.diagnose(ns.Status.Phase, nws.Pods)),
 		ToAge(ns.GetCreationTimestamp()),
@@ -164,6 +186,42 @@ type NamespaceWithStats struct {
 	Raw *unstructured.Unstructured
 	// Pods tracks the namespace pods health. Nil when unknown.
 	Pods *PodStats
+	// MX tracks the namespace pods resources usage. Nil when unknown.
+	MX v1.ResourceList
+	// Requests and Limits track resources allocated by the namespace pods. Nil when unknown.
+	Requests, Limits v1.ResourceList
+	// Allocatable tracks the cluster allocatable resources. Nil when unknown.
+	Allocatable v1.ResourceList
+}
+
+type nsUtilization struct {
+	usage, req, lim, pReq, pCluster string
+}
+
+// utilization renders the namespace cpu and memory utilization.
+// Usage is measured against requests and requests against the cluster allocatable resources.
+func (n *NamespaceWithStats) utilization() (cpu, mem nsUtilization) {
+	cpu = nsUtilization{NAValue, NAValue, NAValue, NAValue, NAValue}
+	mem = cpu
+	if n.MX != nil {
+		cpu.usage, mem.usage = toMc(n.MX.Cpu().MilliValue()), toMi(n.MX.Memory().Value())
+	}
+	if n.Requests == nil {
+		return
+	}
+	rcpu, rmem := n.Requests.Cpu().MilliValue(), n.Requests.Memory().Value()
+	cpu.req, mem.req = toMc(rcpu), toMi(rmem)
+	cpu.lim, mem.lim = toMc(n.Limits.Cpu().MilliValue()), toMi(n.Limits.Memory().Value())
+	if n.MX != nil {
+		cpu.pReq = client.ToPercentageStr(n.MX.Cpu().MilliValue(), rcpu)
+		mem.pReq = client.ToPercentageStr(n.MX.Memory().Value(), rmem)
+	}
+	if n.Allocatable != nil {
+		cpu.pCluster = client.ToPercentageStr(rcpu, n.Allocatable.Cpu().MilliValue())
+		mem.pCluster = client.ToPercentageStr(rmem, n.Allocatable.Memory().Value())
+	}
+
+	return
 }
 
 // GetObjectKind returns a schema object.
